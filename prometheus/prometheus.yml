@@ -1,0 +1,18 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'microservicio-a'
+    static_configs:
+      - targets: ['microservice-a:3000']
+    metrics_path: '/metrics'
+
+  - job_name: 'microservicio-b'
+    static_configs:
+      - targets: ['microservice-b:3001']
+    metrics_path: '/metrics'
+
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']

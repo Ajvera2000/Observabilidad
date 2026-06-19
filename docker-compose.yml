@@ -1,0 +1,123 @@
+version: '3.8'
+
+services:
+
+  # ============================================================
+  # MICROSERVICIOS
+  # ============================================================
+  microservice-a:
+    build: ./microservice-a
+    ports:
+      - "3000:3000"
+    environment:
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+    networks:
+      - observabilidad
+    depends_on:
+      - jaeger
+      - microservice-b
+    restart: unless-stopped
+
+  microservice-b:
+    build: ./microservice-b
+    ports:
+      - "3001:3001"
+    environment:
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+    networks:
+      - observabilidad
+    depends_on:
+      - jaeger
+    restart: unless-stopped
+
+  # ============================================================
+  # LOGS - Elasticsearch + Kibana
+  # ============================================================
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.12.0
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+    networks:
+      - observabilidad
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -q '\"status\":\"green\"\\|\"status\":\"yellow\"'"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.12.0
+    ports:
+      - "5601:5601"
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - observabilidad
+
+  # Fluent Bit: recoge logs de Docker y los envía a Elasticsearch
+  fluent-bit:
+    image: fluent/fluent-bit:2.2
+    volumes:
+      - ./fluent-bit/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - observabilidad
+    restart: unless-stopped
+
+  # ============================================================
+  # MÉTRICAS - Prometheus + Grafana
+  # ============================================================
+  prometheus:
+    image: prom/prometheus:v2.49.1
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    networks:
+      - observabilidad
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:10.3.1
+    ports:
+      - "3002:3000"   # ⚠️  Puerto 3002 en tu máquina para no chocar con microservice-a
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin123
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+    networks:
+      - observabilidad
+    restart: unless-stopped
+
+  # ============================================================
+  # TRAZAS - Jaeger
+  # ============================================================
+  jaeger:
+    image: jaegertracing/all-in-one:1.53
+    ports:
+      - "16686:16686"   # UI de Jaeger
+      - "14268:14268"   # Recibe trazas HTTP de los servicios
+      - "6831:6831/udp" # Recibe trazas UDP
+    networks:
+      - observabilidad
+    restart: unless-stopped
+
+networks:
+  observabilidad:
+    driver: bridge
+
+volumes:
+  grafana-data:
